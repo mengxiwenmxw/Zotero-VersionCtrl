@@ -1,0 +1,133 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <errno.h>
+#include <unistd.h>
+#include <limits.h>
+#include <sys/stat.h>
+#include <dirent.h>
+#include "sync.h"
+#include "fileutil.h"
+#include "portable.h"
+
+static int resolve_peers_conf_path(char *confpath, size_t confpath_len) {
+    char exe_dir[PATH_MAX];
+    if (portable_get_exe_dir(exe_dir, sizeof(exe_dir)) == 0) {
+        if (portable_join_path(confpath, confpath_len, exe_dir, "peers.conf") != 0) {
+            fprintf(stderr, "path too long for peers.conf\n");
+            return -1;
+        }
+    } else {
+        // fallback to current working directory
+        char cwd[PATH_MAX];
+        if (!getcwd(cwd, sizeof(cwd))) {
+            perror("getcwd");
+            return -1;
+        }
+        if (portable_join_path(confpath, confpath_len, cwd, "peers.conf") != 0) {
+            fprintf(stderr, "path too long for peers.conf\n");
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static char *trim_line(char *line) {
+    char *p = line;
+    while (*p && (*p == ' ' || *p == '\t')) p++;
+    char *end = p + strlen(p);
+    while (end > p && (end[-1] == '\n' || end[-1] == '\r' || end[-1] == ' ' || end[-1] == '\t')) {
+        end--;
+    }
+    *end = '\0';
+    return p;
+}
+
+// Read peers from peers.conf located next to the executable (same directory).
+// For each peer path, sync files under that path into current working directory.
+int sync_fetch_missing(void) {
+    char confpath[PATH_MAX];
+    if (resolve_peers_conf_path(confpath, sizeof(confpath)) != 0) {
+        return 1;
+    }
+
+    FILE *f = fopen(confpath, "r");
+    if (!f) {
+        fprintf(stderr, "could not open %s (create one path per line)\n", confpath);
+        return 1;
+    }
+    char line[4096];
+    char cwd[PATH_MAX];
+    if (!getcwd(cwd, sizeof(cwd))) {
+        perror("getcwd"); fclose(f); return 1;
+    }
+    while (fgets(line, sizeof(line), f)) {
+        char *p = trim_line(line);
+        if (*p == '#') continue;
+        if (*p == '\0') continue;
+        printf("syncing from peer: %s\n", p);
+        if (sync_from_peer(p, cwd) != 0) {
+            fprintf(stderr, "sync from %s failed\n", p);
+        }
+    }
+    fclose(f);
+    return 0;
+}
+
+int sync_check_peers(void) {
+    char confpath[PATH_MAX];
+    if (resolve_peers_conf_path(confpath, sizeof(confpath)) != 0) {
+        return 1;
+    }
+
+    FILE *f = fopen(confpath, "r");
+    if (!f) {
+        fprintf(stderr, "could not open %s (create one path per line)\n", confpath);
+        return 1;
+    }
+
+    int ok_count = 0;
+    int fail_count = 0;
+    int total_count = 0;
+    char line[4096];
+
+    while (fgets(line, sizeof(line), f)) {
+        char *p = trim_line(line);
+        if (*p == '#') continue;
+        if (*p == '\0') continue;
+        total_count++;
+
+        struct stat st;
+        if (stat(p, &st) != 0) {
+            fprintf(stderr, "[FAIL] %s -> %s\n", p, strerror(errno));
+            fail_count++;
+            continue;
+        }
+
+        if (!S_ISDIR(st.st_mode)) {
+            fprintf(stderr, "[FAIL] %s -> not a directory\n", p);
+            fail_count++;
+            continue;
+        }
+
+        DIR *d = opendir(p);
+        if (!d) {
+            fprintf(stderr, "[FAIL] %s -> cannot open: %s\n", p, strerror(errno));
+            fail_count++;
+            continue;
+        }
+        closedir(d);
+        printf("[ OK ] %s\n", p);
+        ok_count++;
+    }
+
+    fclose(f);
+
+    if (total_count == 0) {
+        fprintf(stderr, "No peer paths found in %s\n", confpath);
+        return 1;
+    }
+
+    printf("check summary: total=%d ok=%d fail=%d\n", total_count, ok_count, fail_count);
+    return (fail_count == 0) ? 0 : 1;
+}

@@ -1,6 +1,12 @@
+build/
+zvcs
+zvcs.exe
+*.o
+src/*.o
 # Dir
 laptop
 pc
 merged
 # Files
 *.log
+AGENT.md
