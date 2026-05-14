@@ -9,4 +9,5 @@ pc
 merged
 # Files
 *.log
+*.codex
 AGENT.md

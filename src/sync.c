@@ -43,6 +43,77 @@ static char *trim_line(char *line) {
     return p;
 }
 
+static int read_peers_conf(const char *confpath, int (*cb)(const char *peer, void *ctx), void *ctx) {
+    FILE *f = fopen(confpath, "r");
+    if (!f) return -1;
+
+    char line[4096];
+    while (fgets(line, sizeof(line), f)) {
+        char *p = trim_line(line);
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '#' || *p == '\0') continue;
+        if (cb(p, ctx) != 0) {
+            fclose(f);
+            return -1;
+        }
+    }
+
+    fclose(f);
+    return 0;
+}
+
+struct fetch_ctx {
+    char cwd[PATH_MAX];
+};
+
+static int fetch_peer_cb(const char *peer, void *opaque) {
+    struct fetch_ctx *ctx = opaque;
+    if (peer[0] == '\0') return 0;
+
+    printf("syncing from peer: %s\n", peer);
+    if (sync_from_peer(peer, ctx->cwd) != 0) {
+        fprintf(stderr, "sync from %s failed\n", peer);
+    } else {
+        printf("sync from %s completed\n", peer);
+    }
+    return 0;
+}
+
+struct check_ctx {
+    int ok_count;
+    int fail_count;
+    int total_count;
+};
+
+static int check_peer_cb(const char *peer, void *opaque) {
+    struct check_ctx *ctx = opaque;
+    ctx->total_count++;
+
+    struct stat st;
+    if (stat(peer, &st) != 0) {
+        fprintf(stderr, "[FAIL] %s -> %s\n", peer, strerror(errno));
+        ctx->fail_count++;
+        return 0;
+    }
+
+    if (!S_ISDIR(st.st_mode)) {
+        fprintf(stderr, "[FAIL] %s -> not a directory\n", peer);
+        ctx->fail_count++;
+        return 0;
+    }
+
+    DIR *d = opendir(peer);
+    if (!d) {
+        fprintf(stderr, "[FAIL] %s -> cannot open: %s\n", peer, strerror(errno));
+        ctx->fail_count++;
+        return 0;
+    }
+    closedir(d);
+    printf("[ OK ] %s\n", peer);
+    ctx->ok_count++;
+    return 0;
+}
+
 // Read peers from peers.conf located next to the executable (same directory).
 // For each peer path, sync files under that path into current working directory.
 int sync_fetch_missing(void) {
@@ -51,26 +122,18 @@ int sync_fetch_missing(void) {
         return 1;
     }
 
-    FILE *f = fopen(confpath, "r");
-    if (!f) {
+    char cwd[PATH_MAX];
+    if (!getcwd(cwd, sizeof(cwd))) {
+        perror("getcwd");
+        return 1;
+    }
+
+    struct fetch_ctx ctx;
+    snprintf(ctx.cwd, sizeof(ctx.cwd), "%s", cwd);
+    if (read_peers_conf(confpath, fetch_peer_cb, &ctx) != 0) {
         fprintf(stderr, "could not open %s (create one path per line)\n", confpath);
         return 1;
     }
-    char line[4096];
-    char cwd[PATH_MAX];
-    if (!getcwd(cwd, sizeof(cwd))) {
-        perror("getcwd"); fclose(f); return 1;
-    }
-    while (fgets(line, sizeof(line), f)) {
-        char *p = trim_line(line);
-        if (*p == '#') continue;
-        if (*p == '\0') continue;
-        printf("syncing from peer: %s\n", p);
-        if (sync_from_peer(p, cwd) != 0) {
-            fprintf(stderr, "sync from %s failed\n", p);
-        }
-    }
-    fclose(f);
     return 0;
 }
 
@@ -80,54 +143,16 @@ int sync_check_peers(void) {
         return 1;
     }
 
-    FILE *f = fopen(confpath, "r");
-    if (!f) {
+    struct check_ctx ctx = {0, 0, 0};
+    if (read_peers_conf(confpath, check_peer_cb, &ctx) != 0) {
         fprintf(stderr, "could not open %s (create one path per line)\n", confpath);
         return 1;
     }
-
-    int ok_count = 0;
-    int fail_count = 0;
-    int total_count = 0;
-    char line[4096];
-
-    while (fgets(line, sizeof(line), f)) {
-        char *p = trim_line(line);
-        if (*p == '#') continue;
-        if (*p == '\0') continue;
-        total_count++;
-
-        struct stat st;
-        if (stat(p, &st) != 0) {
-            fprintf(stderr, "[FAIL] %s -> %s\n", p, strerror(errno));
-            fail_count++;
-            continue;
-        }
-
-        if (!S_ISDIR(st.st_mode)) {
-            fprintf(stderr, "[FAIL] %s -> not a directory\n", p);
-            fail_count++;
-            continue;
-        }
-
-        DIR *d = opendir(p);
-        if (!d) {
-            fprintf(stderr, "[FAIL] %s -> cannot open: %s\n", p, strerror(errno));
-            fail_count++;
-            continue;
-        }
-        closedir(d);
-        printf("[ OK ] %s\n", p);
-        ok_count++;
-    }
-
-    fclose(f);
-
-    if (total_count == 0) {
+    if (ctx.total_count == 0) {
         fprintf(stderr, "No peer paths found in %s\n", confpath);
         return 1;
     }
 
-    printf("check summary: total=%d ok=%d fail=%d\n", total_count, ok_count, fail_count);
-    return (fail_count == 0) ? 0 : 1;
+    printf("check summary: total=%d ok=%d fail=%d\n", ctx.total_count, ctx.ok_count, ctx.fail_count);
+    return (ctx.fail_count == 0) ? 0 : 1;
 }
