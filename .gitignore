@@ -1,4 +1,11 @@
 build/
+test/
+!test/
+test/*
+!test/test_commit.sh
+!test/test_databank_sync.sh
+!test/test_integration.sh
+!test/test_peers_check.sh
 zvcs
 zvcs.exe
 *.o

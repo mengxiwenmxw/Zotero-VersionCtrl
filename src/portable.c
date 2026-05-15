@@ -76,3 +76,48 @@ int portable_join_path(char *out, size_t outlen, const char *base, const char *n
     memcpy(out + blen + 1, name, nlen + 1);
     return 0;
 }
+
+int portable_replace_file(const char *src, const char *dst) {
+#ifdef _WIN32
+    if (MoveFileExA(src, dst, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0) {
+        return 0;
+    }
+    return -1;
+#else
+    return rename(src, dst);
+#endif
+}
+
+int portable_color_enabled(void) {
+    static int cached = -1;
+    if (cached != -1) return cached;
+
+    if (getenv("NO_COLOR") != NULL) {
+        cached = 0;
+        return cached;
+    }
+
+#ifdef _WIN32
+    DWORD mode = 0;
+    HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (handle == INVALID_HANDLE_VALUE || handle == NULL) {
+        cached = 0;
+        return cached;
+    }
+    if (!GetConsoleMode(handle, &mode)) {
+        cached = 0;
+        return cached;
+    }
+    if ((mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING) == 0) {
+        if (!SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING)) {
+            cached = 0;
+            return cached;
+        }
+    }
+    cached = 1;
+    return cached;
+#else
+    cached = isatty(STDOUT_FILENO) ? 1 : 0;
+    return cached;
+#endif
+}

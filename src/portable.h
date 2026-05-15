@@ -16,6 +16,12 @@ int portable_mkdir(const char *path, mode_t mode);
 // Safely join base and name into out (with '/' separator). Returns 0 on success.
 int portable_join_path(char *out, size_t outlen, const char *base, const char *name);
 
+// Replace dst with src atomically when the platform supports it.
+int portable_replace_file(const char *src, const char *dst);
+
+// Enable ANSI color output when supported by the current terminal.
+int portable_color_enabled(void);
+
 // portable rename/unlink wrappers if needed (currently use standard ones)
 
 #endif // PORTABLE_H

@@ -10,6 +10,14 @@
 #include "fileutil.h"
 #include "portable.h"
 
+static int sync_color_enabled(void) {
+    return portable_color_enabled();
+}
+
+static const char *sync_cc(const char *code) {
+    return sync_color_enabled() ? code : "";
+}
+
 static int resolve_peers_conf_path(char *confpath, size_t confpath_len) {
     char exe_dir[PATH_MAX];
     if (portable_get_exe_dir(exe_dir, sizeof(exe_dir)) == 0) {
@@ -70,11 +78,11 @@ static int fetch_peer_cb(const char *peer, void *opaque) {
     struct fetch_ctx *ctx = opaque;
     if (peer[0] == '\0') return 0;
 
-    printf("syncing from peer: %s\n", peer);
+    printf("%ssyncing from peer:%s %s\n", sync_cc("\033[36m"), sync_cc("\033[0m"), peer);
     if (sync_from_peer(peer, ctx->cwd) != 0) {
-        fprintf(stderr, "sync from %s failed\n", peer);
+        fprintf(stderr, "%ssync from%s %s %sfailed%s\n", sync_cc("\033[31m"), sync_cc("\033[0m"), peer, "", sync_cc("\033[0m"));
     } else {
-        printf("sync from %s completed\n", peer);
+        printf("%ssync from%s %s %scompleted%s\n", sync_cc("\033[32m"), sync_cc("\033[0m"), peer, "", sync_cc("\033[0m"));
     }
     return 0;
 }
@@ -91,25 +99,25 @@ static int check_peer_cb(const char *peer, void *opaque) {
 
     struct stat st;
     if (stat(peer, &st) != 0) {
-        fprintf(stderr, "[FAIL] %s -> %s\n", peer, strerror(errno));
+        fprintf(stderr, "%s[FAIL]%s %s -> %s\n", sync_cc("\033[31m"), sync_cc("\033[0m"), peer, strerror(errno));
         ctx->fail_count++;
         return 0;
     }
 
     if (!S_ISDIR(st.st_mode)) {
-        fprintf(stderr, "[FAIL] %s -> not a directory\n", peer);
+        fprintf(stderr, "%s[FAIL]%s %s -> not a directory\n", sync_cc("\033[31m"), sync_cc("\033[0m"), peer);
         ctx->fail_count++;
         return 0;
     }
 
     DIR *d = opendir(peer);
     if (!d) {
-        fprintf(stderr, "[FAIL] %s -> cannot open: %s\n", peer, strerror(errno));
+        fprintf(stderr, "%s[FAIL]%s %s -> cannot open: %s\n", sync_cc("\033[31m"), sync_cc("\033[0m"), peer, strerror(errno));
         ctx->fail_count++;
         return 0;
     }
     closedir(d);
-    printf("[ OK ] %s\n", peer);
+    printf("%s[ OK ]%s %s\n", sync_cc("\033[32m"), sync_cc("\033[0m"), peer);
     ctx->ok_count++;
     return 0;
 }
@@ -131,7 +139,7 @@ int sync_fetch_missing(void) {
     struct fetch_ctx ctx;
     snprintf(ctx.cwd, sizeof(ctx.cwd), "%s", cwd);
     if (read_peers_conf(confpath, fetch_peer_cb, &ctx) != 0) {
-        fprintf(stderr, "could not open %s (create one path per line)\n", confpath);
+        fprintf(stderr, "%scould not open%s %s (create one path per line)\n", sync_cc("\033[31m"), sync_cc("\033[0m"), confpath);
         return 1;
     }
     return 0;
@@ -145,14 +153,14 @@ int sync_check_peers(void) {
 
     struct check_ctx ctx = {0, 0, 0};
     if (read_peers_conf(confpath, check_peer_cb, &ctx) != 0) {
-        fprintf(stderr, "could not open %s (create one path per line)\n", confpath);
+        fprintf(stderr, "%scould not open%s %s (create one path per line)\n", sync_cc("\033[31m"), sync_cc("\033[0m"), confpath);
         return 1;
     }
     if (ctx.total_count == 0) {
-        fprintf(stderr, "No peer paths found in %s\n", confpath);
+        fprintf(stderr, "%sNo peer paths found%s in %s\n", sync_cc("\033[33m"), sync_cc("\033[0m"), confpath);
         return 1;
     }
 
-    printf("check summary: total=%d ok=%d fail=%d\n", ctx.total_count, ctx.ok_count, ctx.fail_count);
+    printf("%scheck summary:%s total=%d ok=%d fail=%d\n", sync_cc("\033[36m"), sync_cc("\033[0m"), ctx.total_count, ctx.ok_count, ctx.fail_count);
     return (ctx.fail_count == 0) ? 0 : 1;
 }
